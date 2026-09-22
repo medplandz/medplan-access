@@ -487,43 +487,36 @@
 // ─── CONFIG ───────────────────────────────────────────────
 const NOTION_LINK = "https://app.notion.com/p/MedMap-2nd-Year-Medical-Student-Planner-3af852c333e280639668d696cba67d7f?source=copy_link";
 const ADMIN_PASSWORD = "MedPlan2026!";
-const OTP_EXPIRY_MS = 10 * 60 * 1000; // 10 minutes
+const OTP_EXPIRY_MS = 10 * 60 * 1000;
+const STORAGE_KEY = "medplan_buyers";
 
 // ─── STATE ────────────────────────────────────────────────
-let db = null;
 let currentEmail = "";
 let currentOTP = "";
 let otpTimestamp = 0;
 let adminLoggedIn = false;
 
-// ─── INIT ─────────────────────────────────────────────────
-async function init() {
+// ─── LOCALSTORAGE HELPERS ─────────────────────────────────
+function getBuyers() {
   try {
-    db = await claude.use("db");
-  } catch(e) {
-    console.log("DB not available");
-  }
+    return JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+  } catch(e) { return []; }
 }
 
-init();
+function saveBuyers(buyers) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(buyers));
+  } catch(e) {}
+}
+
+function isEmailAuthorized(email) {
+  const buyers = getBuyers();
+  return buyers.some(b => b.email === email.toLowerCase().trim());
+}
 
 // ─── OTP GENERATION ───────────────────────────────────────
 function generateOTP() {
   return Math.floor(100000 + Math.random() * 900000).toString();
-}
-
-// ─── CHECK EMAIL IN DB ────────────────────────────────────
-async function isEmailAuthorized(email) {
-  if (!db) return false;
-  try {
-    const snap = await db.collection("buyers")
-      .where("email", "==", email.toLowerCase().trim())
-      .limit(1)
-      .get();
-    return !snap.empty;
-  } catch(e) {
-    return false;
-  }
 }
 
 // ─── SEND OTP ─────────────────────────────────────────────
@@ -539,12 +532,11 @@ async function sendOTP() {
     return;
   }
 
-  // Check if authorized
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span>Vérification...';
   hideMsg("email-msg");
 
-  const authorized = await isEmailAuthorized(email);
+  const authorized = isEmailAuthorized(email);
   if (!authorized) {
     btn.disabled = false;
     btn.innerHTML = "Envoyer le code";
@@ -666,16 +658,6 @@ async function verifyOTP() {
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span>Accès en cours...';
 
-  // Log access in DB
-  if (db) {
-    try {
-      await db.doc(`access_log/${Date.now()}`).set({
-        email: currentEmail,
-        timestamp: new Date().toISOString()
-      });
-    } catch(e) {}
-  }
-
   setTimeout(() => {
     goToStep("step-success");
   }, 600);
@@ -756,41 +738,31 @@ function adminLogout() {
 }
 
 async function loadEmailList() {
-  if (!db) {
-    document.getElementById("email-list").innerHTML = '<div class="empty-list">Base de données non disponible.</div>';
+  const buyers = getBuyers();
+  const list = document.getElementById("email-list");
+
+  if (buyers.length === 0) {
+    list.innerHTML = '<div class="empty-list">Aucun acheteur enregistré.</div>';
     return;
   }
 
-  try {
-    const snap = await db.collection("buyers").get();
-    const list = document.getElementById("email-list");
-
-    if (snap.empty) {
-      list.innerHTML = '<div class="empty-list">Aucun acheteur enregistré.</div>';
-      return;
-    }
-
-    list.innerHTML = "";
-    snap.docs.forEach(doc => {
-      const data = doc.data();
-      const item = document.createElement("div");
-      item.className = "email-item";
-      item.innerHTML = `
-        <div>
-          <span>${data.email}</span>
-          <div class="email-item-date">${data.addedAt || ""}</div>
-        </div>
-        <button class="remove-btn" onclick="removeEmail('${doc.id}')">✕</button>
-      `;
-      list.appendChild(item);
-    });
-  } catch(e) {
-    document.getElementById("email-list").innerHTML = '<div class="empty-list">Erreur de chargement.</div>';
-  }
+  list.innerHTML = "";
+  buyers.forEach((b, i) => {
+    const item = document.createElement("div");
+    item.className = "email-item";
+    item.innerHTML = `
+      <div>
+        <span>${b.email}</span>
+        <div class="email-item-date">${b.addedAt || ""}</div>
+      </div>
+      <button class="remove-btn" onclick="removeEmail(${i})">✕</button>
+    `;
+    list.appendChild(item);
+  });
 }
 
-async function addEmail() {
-  if (!db || !adminLoggedIn) return;
+function addEmail() {
+  if (!adminLoggedIn) return;
 
   const input = document.getElementById("new-email");
   const email = input.value.trim().toLowerCase();
@@ -800,37 +772,30 @@ async function addEmail() {
     return;
   }
 
-  try {
-    // Check if already exists
-    const snap = await db.collection("buyers")
-      .where("email", "==", email)
-      .limit(1)
-      .get();
+  const buyers = getBuyers();
 
-    if (!snap.empty) {
-      showMsg("add-msg", "info", "Cet email est déjà enregistré.");
-      return;
-    }
-
-    await db.doc(`buyers/${Date.now()}`).set({
-      email: email,
-      addedAt: new Date().toLocaleDateString("fr-FR")
-    });
-
-    showMsg("add-msg", "success", "Acheteur ajouté ✓");
-    input.value = "";
-    loadEmailList();
-  } catch(e) {
-    showMsg("add-msg", "error", "Erreur lors de l'ajout.");
+  if (buyers.some(b => b.email === email)) {
+    showMsg("add-msg", "info", "Cet email est déjà enregistré.");
+    return;
   }
+
+  buyers.push({
+    email: email,
+    addedAt: new Date().toLocaleDateString("fr-FR")
+  });
+
+  saveBuyers(buyers);
+  showMsg("add-msg", "success", "Acheteur ajouté ✓");
+  input.value = "";
+  loadEmailList();
 }
 
-async function removeEmail(docId) {
-  if (!db || !adminLoggedIn) return;
-  try {
-    await db.doc(`buyers/${docId}`).delete();
-    loadEmailList();
-  } catch(e) {}
+function removeEmail(index) {
+  if (!adminLoggedIn) return;
+  const buyers = getBuyers();
+  buyers.splice(index, 1);
+  saveBuyers(buyers);
+  loadEmailList();
 }
 
 // ─── ENTER KEY ────────────────────────────────────────────
