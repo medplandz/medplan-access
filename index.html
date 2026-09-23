@@ -485,10 +485,11 @@
 
 <script>
 // ─── CONFIG ───────────────────────────────────────────────
-const NOTION_LINK = "https://fortune-spider-337.notion.site/MedMap-1st-year-medical-student-planner-3d1852c333e2800d8aa0d62e7a543b84?source=copy_link";
+const NOTION_LINK = "https://app.notion.com/p/MedMap-2nd-Year-Medical-Student-Planner-3af852c333e280639668d696cba67d7f?source=copy_link";
 const ADMIN_PASSWORD = "MedPlan2026!";
 const OTP_EXPIRY_MS = 10 * 60 * 1000;
 const STORAGE_KEY = "medplan_buyers";
+const SHEETS_URL = "https://script.google.com/macros/s/AKfycbzImOEcyu98IKJu30M7_jZGneO7t7iCbggZiqW9R6t_D7IqyP90fvGTkZeHXk4SL0ufRA/exec";
 
 // ─── STATE ────────────────────────────────────────────────
 let currentEmail = "";
@@ -496,7 +497,7 @@ let currentOTP = "";
 let otpTimestamp = 0;
 let adminLoggedIn = false;
 
-// ─── LOCALSTORAGE HELPERS ─────────────────────────────────
+// ─── LOCALSTORAGE HELPERS (admin panel only) ──────────────
 function getBuyers() {
   try {
     return JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
@@ -509,9 +510,17 @@ function saveBuyers(buyers) {
   } catch(e) {}
 }
 
-function isEmailAuthorized(email) {
-  const buyers = getBuyers();
-  return buyers.some(b => b.email === email.toLowerCase().trim());
+// ─── CHECK EMAIL VIA GOOGLE SHEETS ────────────────────────
+async function isEmailAuthorized(email) {
+  try {
+    const res = await fetch(`${SHEETS_URL}?email=${encodeURIComponent(email)}`);
+    const data = await res.json();
+    return data.authorized === true;
+  } catch(e) {
+    // Fallback to localStorage if fetch fails
+    const buyers = getBuyers();
+    return buyers.some(b => b.email === email.toLowerCase().trim());
+  }
 }
 
 // ─── OTP GENERATION ───────────────────────────────────────
@@ -536,7 +545,7 @@ async function sendOTP() {
   btn.innerHTML = '<span class="spinner"></span>Vérification...';
   hideMsg("email-msg");
 
-  const authorized = isEmailAuthorized(email);
+  const authorized = await isEmailAuthorized(email);
   if (!authorized) {
     btn.disabled = false;
     btn.innerHTML = "Envoyer le code";
